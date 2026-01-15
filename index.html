@@ -1,0 +1,407 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Plus, 
+  Trash2, 
+  CheckCircle2, 
+  Circle, 
+  ChevronDown, 
+  Calculator,
+  X,
+  FileText,
+  Building2,
+  MapPin,
+  Maximize2,
+  ClipboardCheck,
+  MessageSquare,
+  Edit3,
+  Download,
+  Upload,
+  Save,
+  PlusCircle,
+  FileDown,
+  RotateCcw,
+  Cloud,
+  Check
+} from 'lucide-react';
+
+const App = () => {
+  // --- 狀態初始化 ---
+  const [projectFields, setProjectFields] = useState(() => {
+    const saved = localStorage.getItem('project_fields');
+    return saved ? JSON.parse(saved) : [
+      { id: 'f1', label: '建案名稱', value: '範例新建工程案', icon: 'Building2' },
+      { id: 'f2', label: '基地位置', value: '台北市信義區忠孝東路五段某某巷某某號某某樓之三', icon: 'MapPin' },
+      { id: 'f3', label: '基地面積 (坪)', value: '500', icon: 'Maximize2' },
+      { id: 'f4', label: '總樓地板面積 (坪)', value: '2500', icon: 'Calculator' }
+    ];
+  });
+
+  const [categories, setCategories] = useState(() => {
+    const saved = localStorage.getItem('project_categories');
+    return saved ? JSON.parse(saved) : [
+      {
+        id: 'pre-construction',
+        title: '01. 前期規劃與許可費用',
+        isOpen: true,
+        items: [
+          { id: 'p1', text: '測量、地質鑽探費用', completed: true, resultText: '已核對報告書內容', note: '包含鑽探報告、地籍圖謄本費及相關交通費。' },
+          { id: 'p2', text: '建築設計及各項監造酬金', completed: false, resultText: '', note: '依照省（市）建築師酬金標準表計算，分期給付。' }
+        ]
+      }
+    ];
+  });
+
+  const [isEditingInfo, setIsEditingInfo] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newItemText, setNewItemText] = useState('');
+  const [newItemNote, setNewItemNote] = useState('');
+  const [activeCategoryId, setActiveCategoryId] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  const fileInputRef = useRef(null);
+  const printRef = useRef(null);
+
+  // --- 動態載入函式庫 ---
+  useEffect(() => {
+    const loadScript = (src) => {
+      return new Promise((resolve) => {
+        if (document.querySelector(`script[src="${src}"]`)) return resolve();
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = resolve;
+        document.body.appendChild(script);
+      });
+    };
+
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  }, []);
+
+  // --- 自動儲存邏輯 (Debounce) ---
+  useEffect(() => {
+    const saveData = () => {
+      setIsSaving(true);
+      localStorage.setItem('project_fields', JSON.stringify(projectFields));
+      localStorage.setItem('project_categories', JSON.stringify(categories));
+      
+      // 模擬存檔延遲感
+      setTimeout(() => {
+        setIsSaving(false);
+        setLastSaved(new Date().toLocaleTimeString());
+      }, 600);
+    };
+
+    const debounceTimer = setTimeout(saveData, 1200);
+    return () => clearTimeout(debounceTimer);
+  }, [projectFields, categories]);
+
+  // --- 操作邏輯 ---
+  const resetForm = () => {
+    if (window.confirm('確定要清空所有資料並重置表單嗎？此動作無法復原。')) {
+      localStorage.removeItem('project_fields');
+      localStorage.removeItem('project_categories');
+      window.location.reload();
+    }
+  };
+
+  const addProjectField = () => {
+    setProjectFields([...projectFields, { id: Date.now().toString(), label: '新欄位', value: '', icon: 'FileText' }]);
+  };
+
+  const updateField = (id, key, val) => {
+    setProjectFields(projectFields.map(f => f.id === id ? { ...f, [key]: val } : f));
+  };
+
+  const removeField = (id) => {
+    setProjectFields(projectFields.filter(f => f.id !== id));
+  };
+
+  const addCategory = () => {
+    if (!newCategoryName.trim()) return;
+    setCategories([...categories, { id: Date.now().toString(), title: newCategoryName, isOpen: true, items: [] }]);
+    setNewCategoryName('');
+  };
+
+  const deleteCategory = (id) => {
+    if (window.confirm('確定要刪除整個類別嗎？')) setCategories(categories.filter(cat => cat.id !== id));
+  };
+
+  const toggleCategory = (id) => {
+    setCategories(categories.map(cat => cat.id === id ? { ...cat, isOpen: !cat.isOpen } : cat));
+  };
+
+  const addItem = () => {
+    if (!newItemText.trim() || !activeCategoryId) return;
+    setCategories(categories.map(cat => cat.id === activeCategoryId ? {
+      ...cat, items: [...cat.items, { id: Date.now().toString(), text: newItemText, completed: false, resultText: '', note: newItemNote }]
+    } : cat));
+    setIsModalOpen(false);
+    setNewItemText('');
+    setNewItemNote('');
+  };
+
+  const updateItemContent = (catId, itemId, field, val) => {
+    setCategories(categories.map(cat => cat.id === catId ? {
+      ...cat, items: cat.items.map(item => item.id === itemId ? { ...item, [field]: val } : item)
+    } : cat));
+  };
+
+  const toggleItem = (catId, itemId) => {
+    setCategories(categories.map(cat => cat.id === catId ? {
+      ...cat, items: cat.items.map(item => item.id === itemId ? { ...item, completed: !item.completed } : item)
+    } : cat));
+  };
+
+  const deleteItem = (catId, itemId) => {
+    setCategories(categories.map(cat => cat.id === catId ? { ...cat, items: cat.items.filter(i => i.id !== itemId) } : cat));
+  };
+
+  // --- 匯入 Excel ---
+  const importExcel = (e) => {
+    if (!window.XLSX) return;
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = evt.target.result;
+        const workbook = window.XLSX.read(data, { type: 'binary' });
+        
+        const infoSheet = workbook.Sheets["建案基本資料"];
+        if (infoSheet) {
+          const rawInfo = window.XLSX.utils.sheet_to_json(infoSheet);
+          const newFields = rawInfo.map((row, idx) => ({
+            id: `f-${Date.now()}-${idx}`,
+            label: row["欄位名稱"] || "欄位",
+            value: row["內容"] || "",
+            icon: "FileText"
+          }));
+          if (newFields.length > 0) setProjectFields(newFields);
+        }
+
+        const checkSheet = workbook.Sheets["自主檢核清單"];
+        if (checkSheet) {
+          const rawChecks = window.XLSX.utils.sheet_to_json(checkSheet);
+          const newCats = [];
+          
+          rawChecks.forEach((row) => {
+            const catTitle = row["類別"] || "未分類";
+            let cat = newCats.find(c => c.title === catTitle);
+            if (!cat) {
+              cat = { id: `c-${Date.now()}-${newCats.length}`, title: catTitle, isOpen: true, items: [] };
+              newCats.push(cat);
+            }
+            cat.items.push({
+              id: `i-${Date.now()}-${Math.random()}`,
+              text: row["檢核項目"] || "",
+              completed: row["狀態"] === "已完成",
+              resultText: row["自主查核結果"] || "",
+              note: row["自主檢查要點"] || ""
+            });
+          });
+          
+          if (newCats.length > 0) setCategories(newCats);
+        }
+        e.target.value = null;
+      } catch (err) {
+        console.error("Excel Import Error:", err);
+        alert("匯入失敗，請確認檔案格式是否正確。");
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  // --- 匯出功能 ---
+  const exportToPDF = async () => {
+    if (!window.jspdf || !window.html2canvas) return;
+    setIsExporting(true);
+    
+    setTimeout(async () => {
+      try {
+        const element = printRef.current;
+        const canvas = await window.html2canvas(element, { scale: 2, useCORS: true });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(`${projectFields[0]?.value || '建案'}_檢核表.pdf`);
+      } catch (error) {
+        console.error("PDF Export Error", error);
+      } finally {
+        setIsExporting(false);
+      }
+    }, 400);
+  };
+
+  const exportToExcel = () => {
+    if (!window.XLSX) return;
+    const XLSX = window.XLSX;
+    const wb = XLSX.utils.book_new();
+    const infoData = projectFields.map(f => ({ "欄位名稱": f.label, "內容": f.value }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(infoData), "建案基本資料");
+    const checklistData = [];
+    categories.forEach(cat => cat.items.forEach(item => {
+      checklistData.push({ "類別": cat.title, "檢核項目": item.text, "狀態": item.completed ? "已完成" : "未完成", "自主查核結果": item.resultText, "自主檢查要點": item.note });
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(checklistData), "自主檢核清單");
+    XLSX.writeFile(wb, `${projectFields[0]?.value || '建案'}_檢核表.xlsx`);
+  };
+
+  const renderIcon = (name) => {
+    const icons = { Building2, MapPin, Maximize2, Calculator, FileText };
+    const IconComponent = icons[name] || FileText;
+    return <IconComponent size={14} />;
+  };
+
+  return (
+    <div className={`min-h-screen bg-slate-100 p-4 md:p-8 font-sans text-slate-900 ${isExporting ? 'print-mode' : ''}`}>
+      <div className="max-w-5xl mx-auto" ref={printRef}>
+        
+        {/* Header Actions */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 no-print">
+          <div>
+            <h1 className="text-2xl font-black text-slate-800 flex items-center gap-2">
+              <ClipboardCheck className="text-indigo-600" size={28} />
+              預算編列自主檢核表
+            </h1>
+            <div className="flex items-center gap-2 mt-1">
+              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold transition-all ${isSaving ? 'bg-amber-100 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                {isSaving ? <RotateCcw size={10} className="animate-spin" /> : <Cloud size={10} />}
+                {isSaving ? '儲存中...' : lastSaved ? `最後自動儲存於 ${lastSaved}` : '就緒'}
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={resetForm} className="flex items-center gap-2 bg-white border border-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-bold hover:bg-red-50 transition-all shadow-sm">
+              <RotateCcw size={14} /> 重置
+            </button>
+            <button onClick={() => fileInputRef.current.click()} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 px-3 py-2 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm">
+              <Upload size={14} /> 匯入 Excel
+            </button>
+            <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls" onChange={importExcel} />
+            <button onClick={exportToExcel} className="flex items-center gap-2 bg-white border border-slate-200 text-emerald-600 px-3 py-2 rounded-xl text-xs font-bold hover:bg-emerald-50 transition-all shadow-sm">
+              <Download size={14} /> 匯出 Excel
+            </button>
+            <button onClick={exportToPDF} className="flex items-center gap-2 bg-indigo-600 text-white px-3 py-2 rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all shadow-md">
+              <FileDown size={14} /> 匯出 PDF
+            </button>
+          </div>
+        </div>
+
+        {/* 專案資訊卡片 */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
+          <div className="bg-slate-800 px-6 py-3 flex justify-between items-center text-white">
+            <div className="flex items-center gap-2">
+              <Building2 size={20} className="text-indigo-400" />
+              <span className="font-bold text-sm">專案基本資訊</span>
+            </div>
+            {!isExporting && (
+              <button onClick={() => setIsEditingInfo(!isEditingInfo)} className="text-[10px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded-full transition-colors border border-white/20">
+                {isEditingInfo ? '完成' : '編輯'}
+              </button>
+            )}
+          </div>
+          
+          <div className={`p-6 grid gap-6 ${isExporting ? 'grid-cols-2' : 'grid-cols-1 md:grid-cols-3'}`}>
+            {projectFields.map((field) => (
+              <div key={field.id} className="relative">
+                {isEditingInfo && !isExporting ? (
+                  <div className="space-y-1">
+                    <input className="w-full text-[10px] font-bold text-indigo-500 uppercase bg-transparent outline-none" value={field.label} onChange={(e) => updateField(field.id, 'label', e.target.value)} />
+                    <input className="w-full text-sm font-semibold text-slate-700 border-b border-indigo-200 outline-none pb-1" value={field.value} onChange={(e) => updateField(field.id, 'value', e.target.value)} />
+                  </div>
+                ) : (
+                  <>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                      {renderIcon(field.icon)} {field.label}
+                    </label>
+                    <p className="text-sm font-semibold text-slate-700 break-words">{field.value || '-'}</p>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 清單項目 */}
+        <div className="space-y-4">
+          {categories.map(category => (
+            <div key={category.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden break-inside-avoid">
+              <div className="p-4 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-2 cursor-pointer" onClick={() => !isExporting && toggleCategory(category.id)}>
+                  {!isExporting && <ChevronDown size={16} className={`transition-transform ${category.isOpen ? '' : '-rotate-90'}`} />}
+                  <h3 className="font-bold text-slate-800 text-sm">{category.title}</h3>
+                </div>
+                {!isExporting && (
+                  <button onClick={() => { setActiveCategoryId(category.id); setIsModalOpen(true); }} className="text-indigo-600 hover:text-indigo-700 p-1">
+                    <PlusCircle size={20} />
+                  </button>
+                )}
+              </div>
+
+              {(category.isOpen || isExporting) && (
+                <div className="divide-y divide-slate-100">
+                  {category.items.map(item => (
+                    <div key={item.id} className="p-4 flex flex-col md:flex-row gap-4">
+                      <div className="flex items-start gap-3 flex-1">
+                        <div className="mt-1 cursor-pointer" onClick={() => !isExporting && toggleItem(category.id, item.id)}>
+                          {item.completed ? <CheckCircle2 size={20} className="text-green-500" /> : <Circle size={20} className="text-slate-200" />}
+                        </div>
+                        <div className="space-y-1 flex-1">
+                          <p className={`text-sm font-bold ${item.completed ? 'text-green-700' : 'text-slate-700'}`}>{item.text}</p>
+                          {item.note && <p className="text-[11px] text-slate-500 italic bg-slate-50 p-2 rounded-lg border-l-2 border-slate-200">{item.note}</p>}
+                        </div>
+                      </div>
+                      <div className="md:w-1/3">
+                        {!isExporting ? (
+                          <div className="relative">
+                            <MessageSquare size={12} className="absolute left-2.5 top-2.5 text-slate-300" />
+                            <input type="text" placeholder="輸入查核結果..." className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-[11px] outline-none focus:border-indigo-300" value={item.resultText} onChange={(e) => updateItemContent(category.id, item.id, 'resultText', e.target.value)} />
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-500">{item.resultText || '(無查核紀錄)'}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 新增項目 Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl">
+            <h2 className="font-black mb-4">新增檢核項目</h2>
+            <div className="space-y-3">
+              <input autoFocus type="text" placeholder="項目名稱" className="w-full bg-slate-50 border p-3 rounded-xl text-sm" value={newItemText} onChange={(e) => setNewItemText(e.target.value)} />
+              <textarea placeholder="檢查要點 (選填)" className="w-full bg-slate-50 border p-3 rounded-xl text-sm h-24" value={newItemNote} onChange={(e) => setNewItemNote(e.target.value)} />
+            </div>
+            <div className="flex gap-2 mt-6">
+              <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 text-sm font-bold text-slate-400">取消</button>
+              <button onClick={addItem} className="flex-1 py-3 text-sm font-bold bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-100">新增</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @media print { .no-print { display: none !important; } }
+        .print-mode .no-print { display: none !important; }
+        .break-inside-avoid { break-inside: avoid; }
+      `}</style>
+    </div>
+  );
+};
+
+export default App;
